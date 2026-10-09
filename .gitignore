@@ -1,0 +1,27 @@
+# Python / Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+
+# Streamlit
+.streamlit/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data & Credentials
+.env
+aws_credentials.json
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
