@@ -13,7 +13,10 @@ import json
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Any, List
-from backend.schema import validate_telemetry_payload
+try:
+    from backend.schema import validate_telemetry_payload
+except ImportError:
+    from schema import validate_telemetry_payload
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BoreWiseBackend")
@@ -196,7 +199,7 @@ def run_local_server(port: int = 8000):
     """Runs local server on port 8000."""
     server_address = ("", port)
     httpd = HTTPServer(server_address, LocalHTTPRequestHandler)
-    print(f"🚀 BoreWise Ingestion Server running at http://localhost:{port}/telemetry")
+    print(f"[BoreWise] Ingestion Server running at http://localhost:{port}/telemetry")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
