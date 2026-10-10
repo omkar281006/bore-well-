@@ -25,3 +25,13 @@ aws_credentials.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.log
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+data/local_store/

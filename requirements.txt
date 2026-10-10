@@ -1,7 +1,9 @@
-streamlit>=1.30.0
+# Python side of BoreWise: simulator, local API, tests, Streamlit dashboard.
 pandas>=2.0.0
 numpy>=1.24.0
+streamlit>=1.30.0
 plotly>=5.18.0
 requests>=2.31.0
-boto3>=1.34.0
 pytest>=8.0.0
+# Only needed to talk to DynamoDB from your laptop (Lambda already has it).
+boto3>=1.34.0

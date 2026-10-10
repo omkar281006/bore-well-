@@ -1,0 +1,26 @@
+{
+  "name": "borewise-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "BoreWise web app: 3D borewell digital twin, dry-up forecast and failure diagnosis.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test src/sim/sim.test.js",
+    "validate": "node scripts/validate.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "0.150.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "vite": "^5.4.10"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

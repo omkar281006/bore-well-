@@ -6,12 +6,15 @@ quantile-based risk forecasts (P10, P50, P90) with plain-language recommendation
 """
 
 import os
+import sys
 import json
 import requests
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # run from any folder
 
 from simulator.simulator import BorewellSimulator
 from simulator.forecast import analyze_drawdown_and_recovery, forecast_water_level_risk
@@ -120,11 +123,17 @@ df_telemetry = pd.DataFrame()
 if data_mode == "Python Simulator":
     scenario_choice = st.sidebar.selectbox(
         "Simulation Scenario",
-        ["normal", "weak_recharge", "over_pumping"],
+        ["normal", "weak_recharge", "over_pumping", "fracture", "interf", "clog", "wear", "dry", "sensor"],
         format_func=lambda x: {
             "normal": "Normal Operation (Sustainable)",
             "weak_recharge": "Weak Recharge (Slow Recovery)",
-            "over_pumping": "Over-Pumping (Depleting Aquifer)"
+            "over_pumping": "Over-Pumping (Depleting Aquifer)",
+            "fracture": "Fracture Dewatering",
+            "interf": "Neighbour Interference",
+            "clog": "Well Clogging",
+            "wear": "Pump Wear",
+            "dry": "Dry Running",
+            "sensor": "Sensor Fault (false echo)",
         }[x]
     )
     sim_hours = st.sidebar.slider("Historical Data Span (Hours)", 24, 168, 72, 24)
@@ -137,25 +146,22 @@ elif data_mode == "Local Sample CSV":
 
 elif data_mode == "AWS Endpoint / Local API":
     api_url = st.sidebar.text_input("API URL", value="http://localhost:8000/telemetry")
+    # Streamlit reruns the script on every click, so keep fetched data in session state.
     if st.sidebar.button("Fetch Live Telemetry"):
         try:
-            res = requests.get(api_url, params={"well_id": well_id_input}, timeout=5)
+            res = requests.get(api_url, params={"well_id": well_id_input, "limit": 1000}, timeout=10)
             if res.status_code == 200:
                 items = res.json().get("telemetry", [])
                 if items:
-                    df_telemetry = pd.DataFrame(items)
+                    st.session_state["api_df"] = pd.DataFrame(items)
                     st.sidebar.success(f"Fetched {len(items)} records!")
                 else:
-                    st.sidebar.warning("No records returned from API. Fallback to simulator.")
-                    df_telemetry = load_simulated_data("normal", 72)
+                    st.sidebar.warning("No records returned from API. Showing the simulator instead.")
             else:
-                st.sidebar.error(f"API Error {res.status_code}. Fallback to simulator.")
-                df_telemetry = load_simulated_data("normal", 72)
+                st.sidebar.error(f"API Error {res.status_code}. Showing the simulator instead.")
         except Exception as e:
-            st.sidebar.error(f"Failed to connect to API: {e}. Fallback to simulator.")
-            df_telemetry = load_simulated_data("normal", 72)
-    else:
-        df_telemetry = load_simulated_data("normal", 72)
+            st.sidebar.error(f"Failed to connect to API: {e}. Showing the simulator instead.")
+    df_telemetry = st.session_state.get("api_df", load_simulated_data("normal", 72))
 
 # --- Header & Overview ---
 st.markdown('<div class="main-header">BoreWise: Groundwater Monitoring & Risk Analytics</div>', unsafe_allow_html=True)
@@ -170,7 +176,9 @@ df_telemetry["timestamp"] = pd.to_datetime(df_telemetry["timestamp"])
 df_telemetry = df_telemetry.sort_values("timestamp").reset_index(drop=True)
 
 latest = df_telemetry.iloc[-1]
-current_depth = float(latest["depth_to_water_m"])
+# While the pump runs the sounding is gated, so use the last valid depth.
+_valid = df_telemetry[df_telemetry["depth_to_water_m"].notna() & (df_telemetry.get("measurement_valid", True) == True)]
+current_depth = float((_valid if len(_valid) else df_telemetry)["depth_to_water_m"].dropna().iloc[-1])
 current_pump = str(latest["pump_state"])
 data_source_label = str(latest.get("data_source", "simulated"))
 
@@ -381,7 +389,8 @@ with tab_aws:
             "temperature_c": 27.5,
             "pump_state": current_pump,
             "pump_run_minutes": 30 if current_pump == "ON" else 0,
-            "measurement_valid": True
+            "measurement_valid": True,
+            "pump_current_a": 5.6 if current_pump == "ON" else 0.0,
         }
         
         payload_text = st.text_area("JSON Telemetry Payload", value=json.dumps(sample_payload, indent=2), height=200)
@@ -401,10 +410,11 @@ with tab_aws:
         st.markdown("##### AWS Architecture Summary")
         st.code("""
 Architecture Pipeline:
-- HTTP API: AWS Lambda Function URL / API Gateway
-- Ingestion Lambda: Python 3.14 validation handler
-- Persistence: DynamoDB (Partition Key: well_id, Sort Key: timestamp)
-- Dashboard: Streamlit frontend querying DynamoDB
+- HTTP API: API Gateway (backend/template.yaml)
+- Lambda: Python 3.12, one router for /telemetry, /telemetry/batch, /wells, /wells/{id}
+- Persistence: DynamoDB (Partition Key: well_id, Sort Key: timestamp UTC)
+- Analysis: backend/analysis.py (refill fit, dry-up forecast, findings)
+- Web app: frontend/ (3D) reads GET /wells/{id}; this dashboard reads GET /telemetry
         """, language="yaml")
 
 

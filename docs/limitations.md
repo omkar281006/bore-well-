@@ -22,3 +22,17 @@ Attempts to measure deep water tables using low-cost acoustic/ultrasonic transdu
 
 - **Simplified Mass-Balance Aquifer Model:** Drawdown and exponential recovery equations ($dS/dt = -k \cdot (S - S_0)$) represent single-well diagnostic proxies, not full 3D hydrodynamic numerical models (such as MODFLOW).
 - **Quantile Stochastic Forecasts:** P10, P50, and P90 forecast horizons estimate drawdown trends based on historical pump duty cycles and Monte Carlo trajectory simulations. They are decision-support indicators, not guaranteed deterministic failure predictors.
+
+## Fixes made when the projects were merged (Oct 2026)
+
+- `backend/app.py` crashed on start (`Tuple` was not imported), so the backend tests never ran. Fixed; the suite now has 25 passing tests.
+- The old simulator let drawdown grow with depth, so over-pumping reached 860 m in 72 hours (deeper than the bore and beyond the schema's 300 m limit). It now uses the same bounded physics as the web app.
+- The old short-horizon forecast took its trend from the first and last reading, so one dataset gave Normal, Warning and High Risk an hour apart. The trend now uses the settled pre-pump water table.
+- The firmware sent a fixed timestamp and a fake depth sweep labelled `bench-tested`. It now uses NTP time and labels simulated depth as `simulated`.
+
+## Known gaps
+
+- Acoustic sounding on the ESP32 is not implemented yet (`soundDepthMetres()` in the firmware).
+- The analysis is validated on simulated telemetry only. Field accuracy is unknown until a real well is instrumented.
+- The weak-monsoon check needs daily rainfall on the well record; production should pull IMD gridded rainfall.
+- On hand-pump bores the drawdown per stroke is too small for the clogging, wear, fracture and sensor-fault checks.

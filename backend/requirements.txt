@@ -1,1 +1,2 @@
-boto3>=1.34.0
+# Lambda already includes boto3, so nothing is vendored into the deployment package.
+# Local runs need no packages; for DynamoDB from your laptop install boto3 (see the root requirements.txt).

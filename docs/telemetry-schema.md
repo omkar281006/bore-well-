@@ -1,38 +1,73 @@
-# BoreWise Shared Telemetry Schema Definition
+# BoreWise telemetry schema (v2)
 
-All components across BoreWise (Python simulator, ESP32 firmware, AWS Lambda ingestion API, DynamoDB persistence, and Streamlit dashboard) strictly communicate using this unified telemetry JSON specification.
+Every producer (ESP32 firmware, simulator fleet, Streamlit dispatcher) and every consumer
+(API, DynamoDB, analysis, web app) uses this record. Validation lives in `backend/schema.py`.
 
-## JSON Telemetry Payload Example
+## Example
 
 ```json
 {
   "well_id": "BW-001",
-  "timestamp": "2026-10-10T09:00:00Z",
+  "timestamp": "2027-01-14T06:45:00+05:30",
   "data_source": "simulated",
-  "depth_to_water_m": 48.2,
-  "temperature_c": 28.5,
+  "depth_to_water_m": 55.62,
+  "temperature_c": 25.8,
   "pump_state": "OFF",
-  "pump_run_minutes": 42,
-  "measurement_valid": true
+  "pump_run_minutes": 0,
+  "measurement_valid": true,
+  "pump_current_a": 0.0,
+  "echo_tau_ms": 323.4,
+  "event": "pump_off",
+  "fw": "0.4.0"
 }
 ```
 
-## Field Specification Table
+While the pump runs the acoustic sounding is gated, so the device sends
+`"depth_to_water_m": null, "measurement_valid": false`.
 
-| Field Name | Data Type | Valid Range / Format | Description |
-|---|---|---|---|
-| `well_id` | String | Non-empty string | Unique identifier for the monitored borewell (e.g., `"BW-001"`). |
-| `timestamp` | String | ISO 8601 UTC string | Timestamp of telemetry sample (`"YYYY-MM-DDTHH:MM:SSZ"`). |
-| `data_source` | String | `"simulated"`, `"bench-tested"`, `"field-measured"` | Provenance label indicating origin of telemetry reading. |
-| `depth_to_water_m` | Float | `0.0` to `300.0` metres | Distance from ground casing top (0.0m) down to water surface. Higher values represent deeper drawdown. |
-| `temperature_c` | Float | `-10.0` to `80.0` °C | Ambient/water temperature. |
-| `pump_state` | String | `"ON"`, `"OFF"` | Operational status of borewell pump. |
-| `pump_run_minutes` | Float | `>= 0.0` | Duration pump has been running continuously in minutes. |
-| `measurement_valid` | Boolean | `true`, `false` | Integrity flag indicating sensor confidence or telemetry quality. |
+## Fields
 
-## Validation & Boundary Enforcement Rules
+| Field | Type | Required | Rule | Meaning |
+|---|---|---|---|---|
+| `well_id` | string | yes | 1–64 chars, no `#` | Borewell id, e.g. `BW-001` |
+| `timestamp` | string | yes | ISO 8601 **with timezone** | Stored in UTC (`...Z`) so the DynamoDB sort key orders correctly |
+| `data_source` | string | yes | `simulated`, `bench-tested`, `field-measured` | Provenance; the UI shows it so simulated data is never passed off as field data |
+| `depth_to_water_m` | number or null | yes | 0–300 m; null only when `measurement_valid` is false | Wellhead (0 m) down to the water surface; larger = deeper |
+| `temperature_c` | number | yes | −10 to 80 °C | Air in the bore; used for the speed-of-sound correction |
+| `pump_state` | string | yes | `ON`, `OFF` | From the motor current |
+| `pump_run_minutes` | number | yes | ≥ 0 | Minutes into the current run (0 when off) |
+| `measurement_valid` | boolean | yes | | False while pumping or when the echo is untrusted |
+| `pump_current_a` | number | no | 0–100 A | SCT-013 clamp RMS current; used for pump-wear and dry-run checks |
+| `echo_tau_ms` | number | no | 0–2000 ms | Round-trip time of the water echo |
+| `event` | string | no | `pump_on`, `pump_off`, `dry_cutoff` | Sent the moment the pump switches; `dry_cutoff` when the dry-run relay tripped |
+| `fw` | string | no | ≤ 64 chars | Firmware version |
+| `scenario` | string | no | ≤ 64 chars | Simulator scenario name (simulated data only) |
 
-The ingestion module `backend/schema.py` enforces:
-1. Rejection of payloads with missing required keys with HTTP `400 Bad Request`.
-2. Strict type checking (rejecting string values in numeric fields or invalid enum strings).
-3. Physical bound checking: Depth must be between 0.0m and 300.0m; Temperature must be between -10°C and 80°C.
+## Cadence (what the analysis expects)
+
+- heartbeat every 15 minutes
+- an event record when the pump starts and when it stops
+- a valid reading every 2 minutes for the first hour after the pump stops (the refill curve)
+
+## Well registration (`POST /wells`)
+
+```json
+{
+  "well_id": "BW-001",
+  "name": "Sahyadri Heights CHS, Baner",
+  "bore_type": "open",
+  "depth_m": 120,
+  "intake_m": 103,
+  "pump_flow_m3_day": 172.8,
+  "fractures": [{"d": 22}, {"d": 48}, {"d": 76}, {"d": 98}],
+  "rain_mm": {"2027-06-10": 12.4}
+}
+```
+
+`bore_type` is one of `open`, `screen`, `dug`, `hand`. `fractures` come from the driller's log (optional).
+`rain_mm` is daily rainfall for the well's location (IMD gridded data in production); it enables the weak-monsoon check.
+
+## Validation behaviour
+
+- missing required field, wrong type, bad enum, out-of-range value, or a timestamp without a timezone: HTTP 400 with the reason
+- `/telemetry/batch` accepts up to 500 records; valid ones are stored and the response lists rejected indexes (HTTP 207 when mixed)

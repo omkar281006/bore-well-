@@ -1,137 +1,114 @@
 """
-BoreWise Physics-Inspired Groundwater Telemetry Simulator
+BoreWise borewell telemetry simulator (teammate API, rebuilt on the shared physics).
 
-Generates realistic time-series data for a single virtual borewell based on a 
-transparent, mass-balance drawdown and exponential recovery model.
+Keeps the original `BorewellSimulator.generate_series()` interface used by the Streamlit
+dashboard and tests, but the numbers now come from `simulator.physics`, the same model
+the 3D web app runs. The old model let drawdown feed on itself and reached 860 m in an
+over-pumping run; depths are now bounded by the bore and the pump intake.
 
-Scenarios supported:
-1. 'normal': Periodic pumping with healthy aquifer recharge. Water depth fully recovers.
-2. 'weak_recharge': Low aquifer transmissivity/recharge rate. Recovery is slow, leaving residual drawdown.
-3. 'over_pumping': Intensive/prolonged pumping without adequate recovery windows, driving water depth to critical levels.
+Scenarios: 'normal', 'weak_recharge', 'over_pumping' (original names) plus every
+scenario in physics.SCENARIOS ('healthy', 'overpump', 'fracture', 'interf', 'clog',
+'weak', 'wear', 'dry', 'sensor').
 """
 
-import math
-import datetime
-from typing import List, Dict, Any, Optional
+from __future__ import annotations
+
+import datetime as dt
+import os
+import sys
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
+
+if __package__ in (None, ""):  # allow `python simulator/simulator.py`
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from simulator.physics import STEP_HOURS, Borewell, build_config, season_start_for  # noqa: E402
+else:
+    from .physics import STEP_HOURS, Borewell, build_config, season_start_for
 
 
 class BorewellSimulator:
     """
-    Transparent physics-inspired aquifer drawdown & recovery simulator.
-    
-    Depth parameters:
-    - depth_to_water_m: Distance from wellhead rim (0m) to water surface in metres.
-    - Higher value = lower water table / deeper drawdown.
+    Generates evenly spaced telemetry for one virtual borewell.
+
+    Depth is metres from the wellhead (0 m) down to the water surface; larger means deeper water.
+    While the pump runs the acoustic sounding is gated, so those rows carry the simulator's true
+    level with measurement_valid = False (a real device would send no depth then).
     """
 
     def __init__(
         self,
         well_id: str = "BW-001",
         baseline_depth_m: float = 40.0,
-        drawdown_rate_m_per_min: float = 0.05,
-        normal_recovery_k: float = 0.08,
-        data_source: str = "simulated"
+        drawdown_rate_m_per_min: Optional[float] = None,  # kept for compatibility; physics now sets drawdown
+        normal_recovery_k: Optional[float] = None,  # kept for compatibility; transmissivity now sets refill
+        data_source: str = "simulated",
+        bore: str = "open",
+        seed: int = 4242,
     ):
         self.well_id = well_id
         self.baseline_depth_m = baseline_depth_m
-        self.drawdown_rate = drawdown_rate_m_per_min
-        self.normal_recovery_k = normal_recovery_k
         self.data_source = data_source
+        self.bore = bore
+        self.seed = seed
 
     def generate_series(
         self,
         scenario: str = "normal",
         duration_hours: int = 72,
         interval_minutes: int = 15,
-        start_time: Optional[datetime.datetime] = None
+        start_time: Optional[dt.datetime] = None,
     ) -> pd.DataFrame:
-        """
-        Generates time-series data for a given scenario.
-        
-        Args:
-            scenario: 'normal', 'weak_recharge', or 'over_pumping'
-            duration_hours: total duration in hours (e.g., 72 hours = 3 days)
-            interval_minutes: sampling resolution (e.g., 15 mins)
-            start_time: start datetime (defaults to 3 days ago UTC)
-            
-        Returns:
-            pd.DataFrame with telemetry columns matching shared schema.
-        """
         if start_time is None:
-            # Fixed reproducible default start time or current time
-            start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=duration_hours)
+            start_time = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=duration_hours)
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=dt.timezone.utc)
+        season = season_start_for(start_time)
+        start_day = (start_time - season).total_seconds() / 86400
 
-        total_steps = int((duration_hours * 60) / interval_minutes)
+        sc = build_config(scenario, self.bore, swl0=self.baseline_depth_m, startDay=start_day)
+        well = Borewell(sc, season_start=season, seed=self.seed)
+
+        total = int(duration_hours * 60 / interval_minutes)
+        steps_per_sample = max(1, round(interval_minutes / 60 / STEP_HOURS))
         records: List[Dict[str, Any]] = []
-
-        current_depth = self.baseline_depth_m
-        pump_consecutive_mins = 0
-        
-        # Scenario configuration multipliers
-        if scenario == "weak_recharge":
-            recovery_k = self.normal_recovery_k * 0.25  # 75% slower recovery
-            pump_duty_cycle = (120, 240)  # 2 hrs ON, 4 hrs OFF
-        elif scenario == "over_pumping":
-            recovery_k = self.normal_recovery_k * 0.40  # slow recovery
-            pump_duty_cycle = (360, 120)  # 6 hrs ON, 2 hrs OFF (excessive)
-        else:  # normal
-            recovery_k = self.normal_recovery_k
-            pump_duty_cycle = (120, 480)  # 2 hrs ON, 8 hrs OFF (sustainable)
-
-        on_duration, off_duration = pump_duty_cycle
-
-        for i in range(total_steps):
-            timestamp = start_time + datetime.timedelta(minutes=i * interval_minutes)
-            cycle_minute = (i * interval_minutes) % (on_duration + off_duration)
-            
-            is_pump_on = cycle_minute < on_duration
-
-            if is_pump_on:
-                pump_state = "ON"
-                pump_consecutive_mins += interval_minutes
-                # Drawdown equation: Depth increases (water level falls)
-                # Adds slight non-linear resistance as drawdown deepens
-                additional_drawdown = self.drawdown_rate * interval_minutes * (1.0 + (current_depth - self.baseline_depth_m) * 0.02)
-                current_depth += additional_drawdown
-            else:
-                pump_state = "OFF"
-                pump_consecutive_mins = 0
-                # Recovery equation: Exponential recovery towards baseline_depth_m
-                # dS/dt = -k * (current_depth - baseline_depth)
-                residual = current_depth - self.baseline_depth_m
-                recovery_amount = residual * (1.0 - math.exp(-recovery_k * (interval_minutes / 60.0)))
-                current_depth = max(self.baseline_depth_m, current_depth - recovery_amount)
-
-            # Add minor ambient thermal/measurement variation (25°C to 30°C)
-            temp = round(25.0 + 3.0 * math.sin(i * 0.1) + (1.5 if is_pump_on else 0.0), 2)
-            
+        on_since = None
+        for i in range(total):
+            for _ in range(steps_per_sample if i else 0):
+                well.step()
+            if well.pump_on and on_since is None:
+                on_since = well.t
+            if not well.pump_on:
+                on_since = None
+            valid = not well.pump_on
+            depth = well.measured_depth() if valid else well.dl
             records.append({
                 "well_id": self.well_id,
-                "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "timestamp": (start_time + dt.timedelta(minutes=i * interval_minutes)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "data_source": self.data_source,
-                "depth_to_water_m": round(current_depth, 2),
-                "temperature_c": temp,
-                "pump_state": pump_state,
-                "pump_run_minutes": pump_consecutive_mins if is_pump_on else 0,
-                "measurement_valid": True,
-                "scenario": scenario
+                "depth_to_water_m": round(depth, 2),
+                "temperature_c": round(well.temp, 2),
+                "pump_state": "ON" if well.pump_on else "OFF",
+                "pump_run_minutes": round((well.t - on_since) * 60) if on_since is not None else 0,
+                "pump_current_a": round(well.current_a, 2),
+                "measurement_valid": valid,
+                "scenario": scenario,
             })
-
         return pd.DataFrame(records)
 
 
 def generate_sample_csv(filepath: str = "data/sample_readings.csv") -> pd.DataFrame:
-    """Generates default 72-hour simulated dataset and writes to CSV."""
-    import os
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    sim = BorewellSimulator()
-    df = sim.generate_series(scenario="normal", duration_hours=72, interval_minutes=15)
+    """Writes the default 72-hour simulated dataset (15-minute readings) to CSV."""
+    folder = os.path.dirname(filepath)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    start = dt.datetime(2027, 1, 10, 0, 0, tzinfo=dt.timezone.utc)
+    df = BorewellSimulator().generate_series(scenario="normal", duration_hours=72, interval_minutes=15, start_time=start)
     df.to_csv(filepath, index=False)
     return df
 
 
 if __name__ == "__main__":
     df_sample = generate_sample_csv("data/sample_readings.csv")
-    print(f"Sample telemetry generated successfully with {len(df_sample)} records!")
+    print(f"Sample telemetry generated with {len(df_sample)} records.")
     print(df_sample.head())

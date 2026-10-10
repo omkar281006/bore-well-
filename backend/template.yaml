@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  BoreWise API. API Gateway HTTP API -> one Python Lambda (ingestion, validation, analysis)
+  -> one DynamoDB table (PK well_id, SK timestamp). Deploy from this folder:
+    sam build && sam deploy --guided
+
+Parameters:
+  BillingMode:
+    Type: String
+    Default: PAY_PER_REQUEST
+    AllowedValues: [PAY_PER_REQUEST, PROVISIONED]
+    Description: >
+      PAY_PER_REQUEST costs about 1.25 USD per million writes (a 30-day backfill is ~6,000 writes).
+      PROVISIONED uses 5 read / 5 write units, inside the always-free tier, but large backfills will be slow.
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: Web app origin allowed by CORS, e.g. https://main.d123.amplifyapp.com
+
+Conditions:
+  IsProvisioned: !Equals [!Ref BillingMode, PROVISIONED]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 512
+    Timeout: 20
+    Tracing: Active
+
+Resources:
+  TelemetryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-telemetry'
+      BillingMode: !Ref BillingMode
+      AttributeDefinitions:
+        - { AttributeName: well_id, AttributeType: S }
+        - { AttributeName: timestamp, AttributeType: S }
+      KeySchema:
+        - { AttributeName: well_id, KeyType: HASH }
+        - { AttributeName: timestamp, KeyType: RANGE }
+      ProvisionedThroughput: !If
+        - IsProvisioned
+        - { ReadCapacityUnits: 5, WriteCapacityUnits: 5 }
+        - !Ref AWS::NoValue
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  BoreWiseApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [Content-Type, Authorization]
+        MaxAge: 600
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: app.lambda_handler
+      Description: BoreWise ingestion, validation and analysis
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref TelemetryTable
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TelemetryTable
+      Events:
+        Root:
+          Type: HttpApi
+          Properties: { ApiId: !Ref BoreWiseApi, Path: /, Method: ANY }
+        Proxy:
+          Type: HttpApi
+          Properties: { ApiId: !Ref BoreWiseApi, Path: '/{proxy+}', Method: ANY }
+
+  ApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: BoreWise API Lambda errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref ApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiUrl:
+    Description: Set this as VITE_API_URL in frontend/.env and as --api for the simulator fleet
+    Value: !Sub 'https://${BoreWiseApi}.execute-api.${AWS::Region}.amazonaws.com'
+  TableName:
+    Value: !Ref TelemetryTable

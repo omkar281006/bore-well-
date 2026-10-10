@@ -1,49 +1,68 @@
-# BoreWise System Architecture
-
-BoreWise is a groundwater monitoring, recovery analytics, and quantile risk forecasting platform designed for agricultural cooperatives, housing societies, and borewell operators.
-
-## Data Pipeline Flow
+# BoreWise architecture
 
 ```
-+---------------------------+       +------------------------------------+
-|  Telemetry Generators     |       |  AWS Ingestion & API Layer         |
-|                           |       |                                    |
-| 1. Python Simulator       | ----> |  Lambda Function URL / API Gateway |
-|    (Normal / Weak / Over) |       |                 |                  |
-| 2. ESP32 Bench Prototype  |       |    JSON Schema Validation (400)    |
-|    (Wi-Fi HTTP POST)      |       |                 |                  |
-+---------------------------+       +------------------------------------+
-                                                      |
-                                                      v
-                                        +----------------------------+
-                                        |  Persistence Store         |
-                                        |                            |
-                                        |  AWS DynamoDB / Local      |
-                                        |  (PartitionKey: well_id    |
-                                        |   SortKey: timestamp)      |
-                                        +----------------------------+
-                                                      |
-                                                      v
-                                        +----------------------------+
-                                        |  Streamlit Dashboard       |
-                                        |                            |
-                                        |  - Drawdown & Recovery     |
-                                        |  - P10/P50/P90 Forecasts   |
-                                        |  - Plain-English Alerts    |
-                                        +----------------------------+
+ ESP32 at the wellhead            Simulator fleet (python -m simulator.fleet)
+ (firmware/esp32)                 same physics as the web app, ECS Fargate later
+        │  POST /telemetry/batch              │
+        └──────────────┬──────────────────────┘
+                       ▼
+        API Gateway HTTP API  (backend/template.yaml)
+                       │
+                       ▼
+        Lambda  backend/app.py   ── schema.py   validate + normalise timestamps to UTC
+                       │          ── analysis.py cycles, refill fit, forecast, findings
+                       │          ── storage.py  DynamoDB (or in-memory locally)
+                       ▼
+        DynamoDB  PK well_id · SK timestamp  (well registration at SK "#META")
+                       │
+         GET /wells/{id}│                         GET /telemetry
+                       ▼                                 ▼
+        Web app (frontend/)                       Streamlit dashboard (dashboard/)
+        3D cutaway, forecast, findings,           engineering view: raw readings,
+        alerts in en / mr / hi                    cycle table, short-horizon bands
 ```
 
-## Component Architecture
+## One physics model
 
-### 1. Telemetry Ingestion Layer (`backend/app.py` & `backend/schema.py`)
-- **Validation Engine:** Enforces physical bounds (Depth: 0–300m, Temp: -10 to 80°C), ISO8601 timestamps, valid data source provenance tags, and strict JSON keys.
-- **AWS Lambda Handler:** Stateless serverless entry point supporting CORS header responses (`OPTIONS`, `POST`, `GET`).
-- **Storage Layer:** DynamoDB table (`BoreWiseTelemetry`) with fail-safe local in-memory fallback for offline demo.
+`frontend/src/sim/` (JavaScript) and `simulator/physics.py` (Python) are the same model; a test
+(`tests/test_simulator.py::test_matches_web_app_engine`) checks they agree to 1 mm. The web app's
+demo mode runs it in the browser; the fleet runs it in Python and posts telemetry.
 
-### 2. Simulator & Analytical Engine (`simulator/simulator.py` & `simulator/forecast.py`)
-- **Physics-Inspired Model:** Mass-balance drawdown during pumping coupled with exponential aquifer recovery $dS/dt = -k \cdot (S - S_0)$.
-- **Recovery Analytics:** Calculates cycle drawdowns, post-pumping recovery percentages, and recovery rates ($m/\text{hr}$).
-- **Quantile Forecasting Engine:** Stochastic trajectory simulation generating P10 (optimistic 10th percentile), P50 (median baseline), and P90 (pessimistic 90th percentile) projections over a 12–168 hour horizon.
+## Analysis on real readings
 
-### 3. Streamlit Executive Dashboard (`dashboard/app.py`)
-- **Interactive UI:** Real-time scenario switching (`normal`, `weak_recharge`, `over_pumping`), configurable threshold controls, Plotly depth charts with pump-state shading, quantile projections, AWS API POST dispatcher, and CSV dataset export.
+`backend/analysis.py` only uses what a device sends, so it works for simulated, bench and field data:
+
+1. split the stream into pump cycles from `pump_state` changes
+2. drawdown at switch-off, Theis recovery fit on readings 45+ minutes after switch-off → transmissivity,
+   specific capacity, mean motor current
+3. daily pre-pump water table and deepest level
+4. dry-up forecast: 21-day trend against `intake − 2 m`, P10/P50/P90 dates, pumping cut that reaches 10 June
+5. findings with message keys the web app translates (en / mr / hi)
+
+| Finding | Signature in the data |
+|---|---|
+| Dry before the monsoon | P50 date before 10 June |
+| Pump cut off / running dry | `dry_cutoff` event, or current < 75% of normal while ON |
+| Fracture dewatered | transmissivity down > 35% in a week while the level fell past a fracture |
+| Well clogging | drawdown per run rising faster than transmissivity falls |
+| Pump wear | smaller drawdown and lower current, aquifer unchanged |
+| Neighbour interference | level falls > 45 cm while our pump has been off 2.5 h+ |
+| Weak monsoon | rain since 1 June < 65% of normal (needs `rain_mm` on the well) |
+| Sensor fault | two runs that move the reading < 8 cm |
+
+Validated on simulated telemetry for 4 bore types × 9 scenarios: 31 of 36 combinations caught.
+The hand-pump bore is the weak spot: a hand stroke barely moves the water, so wear, clogging,
+fracture and sensor faults are not visible there.
+
+## AWS services
+
+| Service | Use |
+|---|---|
+| API Gateway (HTTP API) | public endpoint, CORS |
+| Lambda (Python 3.12, arm64) | ingestion, validation, analysis |
+| DynamoDB | telemetry and well records |
+| CloudWatch | Lambda error alarm, logs |
+| Amplify Hosting | the built web app (`frontend/dist`) |
+| ECS Fargate (planned) | always-on simulator fleet |
+| SNS / WhatsApp (planned) | alerts from findings |
+| Strands Agents (planned) | explanations in Marathi / Hindi |
