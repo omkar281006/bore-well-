@@ -37,6 +37,7 @@ DEFAULT_WELL = {
     "depth_m": 120.0,
     "intake_m": 103.0,
     "pump_flow_m3_day": 172.8,  # 120 L/min
+    "min_submergence_m": 2.0,  # water the pump needs above its intake
     "fractures": [],
 }
 
@@ -174,7 +175,7 @@ def forecast(daily: List[Dict[str, Any]], cycles: List[Dict[str, Any]], well: Di
     D = max(0.5, median([c["s_end"] for c in cycles[-4:]]) if cycles else 0.5) + 0.4
     if not math.isfinite(D):
         D = 0.9
-    limit = well["intake_m"] - 2
+    limit = float(well["intake_m"]) - float(well.get("min_submergence_m", 2.0))  # threshold depth
     fc: Dict[str, Any] = {"swl": swl_now, "D": D, "limit": limit}
     rg = regress([(e["day"], e["swl"]) for e in daily[-21:]])
     fc["rate"] = rg["m"] if rg else math.nan
@@ -243,7 +244,11 @@ def analyze(readings: List[Dict[str, Any]], well: Optional[Dict[str, Any]] = Non
     if not readings:
         return {"well": well, "status": "no_data", "findings": [], "forecast": {"state": "learning"}, "daily": [], "cycles": [], "readings": []}
 
-    rows = sorted((dict(r) for r in readings), key=lambda r: parse_ts(r["timestamp"]))
+    all_rows = sorted((dict(r) for r in readings), key=lambda r: parse_ts(r["timestamp"]))
+    # Stale readings and readings with an unknown pump state never feed the forecast.
+    excluded = {"stale": sum(1 for r in all_rows if r.get("stale")),
+                "unknown_pump_state": sum(1 for r in all_rows if r.get("pump_state") == "UNKNOWN")}
+    rows = [r for r in all_rows if not r.get("stale") and r.get("pump_state") in ("ON", "OFF")] or all_rows[-1:]
     latest_ts = parse_ts(rows[-1]["timestamp"])
     season = season_start_for(latest_ts)
     for r in rows:
@@ -362,6 +367,9 @@ def analyze(readings: List[Dict[str, Any]], well: Optional[Dict[str, Any]] = Non
         "latest": latest,
         "last_valid_depth_m": float(last_valid["depth_to_water_m"]) if last_valid else None,
         "water_table_m": r2(swl_now, 3),
+        "threshold_m": round(float(well["intake_m"]) - float(well.get("min_submergence_m", 2.0)), 2),
+        "excluded_readings": excluded,
+        "data_quality": {"readings_used": len(rows), "readings_total": len(all_rows)},
         "findings": F,
         "forecast": {k: (r2(v, 4) if isinstance(v, float) else v) for k, v in fc.items()},
         "daily": [{"day": e["day"], "swl": round(e["swl"], 3), "peak": round(e["peak"], 3)} for e in daily],

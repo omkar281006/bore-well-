@@ -19,7 +19,9 @@
 // }
 
 export const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-export const WELL_ID = import.meta.env.VITE_WELL_ID || 'BW-001';
+// ?well=BW-003 in the address bar picks another registered well without rebuilding.
+const urlWell = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('well') : null;
+export const WELL_ID = (urlWell && /^[A-Za-z0-9_.-]{1,64}$/.test(urlWell) ? urlWell : null) || import.meta.env.VITE_WELL_ID || 'BW-001';
 export const HAS_API = Boolean(API_URL);
 /** Kept for older imports: 'aws' when an API URL is configured. */
 export const MODE = HAS_API ? 'aws' : 'demo';

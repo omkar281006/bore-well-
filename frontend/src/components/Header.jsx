@@ -65,7 +65,7 @@ export function Ticker() {
         ['Depth', sim.meas.toFixed(2) + ' m'],
         ['Water table', sim.swl.toFixed(1) + ' m'],
         ['Pump', sim.pumpOn ? 'ON ' + sim.I.toFixed(1) + ' A' : 'OFF'],
-        ['Transmissivity', sim.T.toFixed(1) + ' m²/d'],
+        ['Transmissivity', Number.isFinite(sim.T) ? sim.T.toFixed(1) + ' m²/d' : 'not measured'],
         ['Air in bore', sim.temp.toFixed(1) + ' °C'],
         ['Echo τ', ping ? (ping.tau * 1000).toFixed(0) + ' ms' : 'gated'],
         ['Rain today', (sim.rain[Math.floor(day)] || 0).toFixed(0) + ' mm'],

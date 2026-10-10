@@ -1,0 +1,77 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WhoAmIAndBudget",
+      "Effect": "Allow",
+      "Action": ["sts:GetCallerIdentity", "budgets:ViewBudget", "budgets:ModifyBudget"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFormationBoreWiseAndSamBucketStacks",
+      "Effect": "Allow",
+      "Action": "cloudformation:*",
+      "Resource": [
+        "arn:aws:cloudformation:*:*:stack/borewise*/*",
+        "arn:aws:cloudformation:*:*:stack/aws-sam-cli-managed-default/*",
+        "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"
+      ]
+    },
+    {
+      "Sid": "CloudFormationReadOnlyGlobal",
+      "Effect": "Allow",
+      "Action": ["cloudformation:ValidateTemplate", "cloudformation:ListStacks", "cloudformation:GetTemplateSummary", "cloudformation:DescribeStacks"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SamArtifactBucket",
+      "Effect": "Allow",
+      "Action": ["s3:CreateBucket", "s3:PutBucketPolicy", "s3:GetBucketPolicy", "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration",
+                 "s3:PutBucketPublicAccessBlock", "s3:PutBucketTagging", "s3:GetBucketLocation", "s3:ListBucket", "s3:PutObject", "s3:GetObject",
+                 "s3:PutBucketOwnershipControls", "s3:PutLifecycleConfiguration"],
+      "Resource": ["arn:aws:s3:::aws-sam-cli-managed-default-*", "arn:aws:s3:::aws-sam-cli-managed-default-*/*"]
+    },
+    {
+      "Sid": "LambdaBoreWiseOnly",
+      "Effect": "Allow",
+      "Action": "lambda:*",
+      "Resource": "arn:aws:lambda:*:*:function:borewise-*"
+    },
+    {
+      "Sid": "DynamoBoreWiseOnly",
+      "Effect": "Allow",
+      "Action": ["dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:DescribeTable", "dynamodb:UpdateTable", "dynamodb:TagResource",
+                 "dynamodb:UntagResource", "dynamodb:ListTagsOfResource", "dynamodb:DescribeContinuousBackups", "dynamodb:UpdateContinuousBackups",
+                 "dynamodb:DescribeTimeToLive", "dynamodb:Query", "dynamodb:GetItem", "dynamodb:Scan"],
+      "Resource": "arn:aws:dynamodb:*:*:table/borewise-*"
+    },
+    {
+      "Sid": "ApiGatewayHttpApi",
+      "Effect": "Allow",
+      "Action": ["apigateway:GET", "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE", "apigateway:TagResource"],
+      "Resource": ["arn:aws:apigateway:*::/apis", "arn:aws:apigateway:*::/apis/*", "arn:aws:apigateway:*::/tags/*"]
+    },
+    {
+      "Sid": "LambdaExecutionRoleForBoreWiseOnly",
+      "Effect": "Allow",
+      "Action": ["iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:UntagRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+                 "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies"],
+      "Resource": "arn:aws:iam::*:role/borewise-*"
+    },
+    {
+      "Sid": "PassBoreWiseRoleToLambdaOnly",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/borewise-*",
+      "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+    },
+    {
+      "Sid": "LogsAndAlarms",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy", "logs:DeleteRetentionPolicy", "logs:DescribeLogGroups",
+                 "logs:TagResource", "logs:TagLogGroup", "logs:ListTagsForResource", "logs:FilterLogEvents", "logs:GetLogEvents", "logs:DescribeLogStreams",
+                 "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"],
+      "Resource": "*"
+    }
+  ]
+}

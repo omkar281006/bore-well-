@@ -1,0 +1,55 @@
+{
+  "_comment": "BoreWise demo well profiles. Register and simulate all of them with: python -m simulator.fleet --api <ApiUrl> --config config/wells.json. Depths are metres below the wellhead. threshold = intake_m - min_submergence_m.",
+  "wells": [
+    {
+      "well_id": "BW-001",
+      "name": "Sahyadri Heights CHS, Baner",
+      "location": "Baner, Pune (simulated)",
+      "bore_type": "open",
+      "depth_m": 120,
+      "intake_m": 103,
+      "min_submergence_m": 2.0,
+      "pump_flow_m3_day": 172.8,
+      "scenario": "overpump",
+      "days": 30,
+      "fractures": [
+        {
+          "d": 22
+        },
+        {
+          "d": 48
+        },
+        {
+          "d": 76
+        },
+        {
+          "d": 98
+        }
+      ]
+    },
+    {
+      "well_id": "BW-002",
+      "name": "Green Valley Farm, Hinjewadi",
+      "location": "Hinjewadi, Pune (simulated)",
+      "bore_type": "screen",
+      "depth_m": 120,
+      "intake_m": 100,
+      "min_submergence_m": 3.0,
+      "pump_flow_m3_day": 216,
+      "scenario": "healthy",
+      "days": 20
+    },
+    {
+      "well_id": "BW-003",
+      "name": "Kothrud Row Houses (shared aquifer)",
+      "location": "Kothrud, Pune (simulated)",
+      "bore_type": "dug",
+      "depth_m": 110,
+      "intake_m": 95,
+      "min_submergence_m": 2.5,
+      "pump_flow_m3_day": 259.2,
+      "scenario": "interf",
+      "days": 20
+    }
+  ]
+}

@@ -17,11 +17,19 @@ data_source tags provenance so simulated numbers are never shown as field data:
 from __future__ import annotations
 
 import datetime
+import os
 from typing import Any, Dict, Tuple
 
 SCHEMA_VERSION = 2
 VALID_DATA_SOURCES = {"simulated", "bench-tested", "field-measured"}
-VALID_PUMP_STATES = {"ON", "OFF"}
+# The team plan writes provenance with underscores; both spellings are accepted and stored with hyphens.
+DATA_SOURCE_ALIASES = {"bench_tested": "bench-tested", "field_measured": "field-measured"}
+VALID_PUMP_STATES = {"ON", "OFF", "UNKNOWN"}  # UNKNOWN: no pump-state signal; never inferred
+FLOW_MAX_LPM = 5000.0
+# Readings that arrive later than this after they were taken are stored but flagged stale and kept out of
+# the forecast. Simulated backfills (data_source 'simulated') are exempt: their timestamps are a model clock.
+STALE_AFTER_HOURS = float(os.environ.get("STALE_AFTER_HOURS", "24"))
+FUTURE_TOLERANCE_MINUTES = 10.0
 VALID_EVENTS = {"pump_on", "pump_off", "dry_cutoff"}
 
 DEPTH_MIN_M = 0.0
@@ -65,8 +73,14 @@ def validate_telemetry_payload(payload: Dict[str, Any]) -> Tuple[bool, str]:
     if parsed.tzinfo is None:
         return False, "Field 'timestamp' must include a timezone (e.g. 'Z' or '+05:30')"
 
-    if payload["data_source"] not in VALID_DATA_SOURCES:
-        return False, f"Invalid 'data_source': '{payload['data_source']}'. Must be one of {sorted(VALID_DATA_SOURCES)}"
+    source = DATA_SOURCE_ALIASES.get(payload["data_source"], payload["data_source"])
+    if source not in VALID_DATA_SOURCES:
+        allowed = sorted(VALID_DATA_SOURCES | set(DATA_SOURCE_ALIASES))
+        return False, f"Invalid 'data_source': '{payload['data_source']}'. Must be one of {allowed}"
+    if source != "simulated":
+        skew_min = (parsed - datetime.datetime.now(datetime.timezone.utc)).total_seconds() / 60
+        if skew_min > FUTURE_TOLERANCE_MINUTES:
+            return False, f"Field 'timestamp' is {skew_min:.0f} minutes in the future; check the device clock (NTP)"
 
     if not isinstance(payload["measurement_valid"], bool):
         return False, "Field 'measurement_valid' must be a boolean"
@@ -88,7 +102,7 @@ def validate_telemetry_payload(payload: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"Field 'temperature_c' ({temp}°C) out of physical bounds [{TEMP_MIN_C}°C, {TEMP_MAX_C}°C]"
 
     if payload["pump_state"] not in VALID_PUMP_STATES:
-        return False, f"Invalid 'pump_state': '{payload['pump_state']}'. Must be 'ON' or 'OFF'"
+        return False, f"Invalid 'pump_state': '{payload['pump_state']}'. Must be 'ON', 'OFF' or 'UNKNOWN'"
 
     run = payload["pump_run_minutes"]
     if not _is_number(run) or run < 0:
@@ -103,6 +117,10 @@ def validate_telemetry_payload(payload: Dict[str, Any]) -> Tuple[bool, str]:
         tau = payload["echo_tau_ms"]
         if not _is_number(tau) or tau < 0 or tau > TAU_MAX_MS:
             return False, f"Field 'echo_tau_ms' must be a number between 0 and {TAU_MAX_MS:g} ms"
+    if payload.get("flow_lpm") is not None:
+        flow = payload["flow_lpm"]
+        if not _is_number(flow) or flow < 0 or flow > FLOW_MAX_LPM:
+            return False, f"Field 'flow_lpm' must be null or a number between 0 and {FLOW_MAX_LPM:g} L/min"
     if payload.get("event") is not None and payload["event"] not in VALID_EVENTS:
         return False, f"Invalid 'event': '{payload['event']}'. Must be one of {sorted(VALID_EVENTS)}"
     for text_field in ("fw", "scenario"):
@@ -124,7 +142,7 @@ def validate_well_config(cfg: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "Field 'well_id' must be a non-empty string of at most 64 characters without '#'"
     if cfg.get("bore_type", "open") not in VALID_BORE_TYPES:
         return False, f"Field 'bore_type' must be one of {sorted(VALID_BORE_TYPES)}"
-    for key, lo, hi in (("depth_m", 5, 600), ("intake_m", 1, 600), ("pump_flow_m3_day", 0.1, 5000)):
+    for key, lo, hi in (("depth_m", 5, 600), ("intake_m", 1, 600), ("pump_flow_m3_day", 0.1, 5000), ("min_submergence_m", 0, 50)):
         if key in cfg and (not _is_number(cfg[key]) or not lo <= cfg[key] <= hi):
             return False, f"Field '{key}' must be a number between {lo} and {hi}"
     if _is_number(cfg.get("intake_m")) and _is_number(cfg.get("depth_m")) and cfg["intake_m"] >= cfg["depth_m"]:
@@ -138,10 +156,27 @@ def validate_well_config(cfg: Dict[str, Any]) -> Tuple[bool, str]:
     return True, ""
 
 
-def normalize_record(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Store every timestamp in UTC ('...Z') so the DynamoDB sort key orders correctly."""
+def normalize_record(payload: Dict[str, Any], received_at: datetime.datetime = None) -> Dict[str, Any]:
+    """
+    Prepare a validated record for storage:
+    * timestamp in UTC ('...Z') so the DynamoDB sort key orders correctly
+    * provenance spelled with hyphens
+    * flow_lpm present (null unless measured), received_at recorded
+    * stale = True when a non-simulated reading arrives more than STALE_AFTER_HOURS after it was taken
+    """
     out = dict(payload)
-    ts = datetime.datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00"))
-    out["timestamp"] = ts.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    received_at = received_at or datetime.datetime.now(datetime.timezone.utc)
+    ts = datetime.datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")).astimezone(datetime.timezone.utc)
+    out["timestamp"] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+    out["data_source"] = DATA_SOURCE_ALIASES.get(payload["data_source"], payload["data_source"])
+    out.setdefault("flow_lpm", None)
+    out["received_at"] = received_at.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    age_h = (received_at - ts).total_seconds() / 3600
+    out["stale"] = out["data_source"] != "simulated" and age_h > STALE_AFTER_HOURS
     out["schema_version"] = SCHEMA_VERSION
     return out
+
+
+def threshold_depth(well: Dict[str, Any]) -> float:
+    """Deepest safe water level: pump intake minus the minimum submergence the pump needs (plan ticket S3)."""
+    return float(well["intake_m"]) - float(well.get("min_submergence_m", 2.0))

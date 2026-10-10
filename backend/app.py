@@ -60,7 +60,8 @@ def handle_telemetry_post(payload: Dict[str, Any]) -> Response:
     rec = normalize_record(payload)
     get_store().put_readings([rec])
     return 201, {"status": "success", "message": "Telemetry record ingested and stored successfully",
-                 "well_id": rec["well_id"], "timestamp": rec["timestamp"], "data_source": rec["data_source"]}
+                 "well_id": rec["well_id"], "timestamp": rec["timestamp"], "data_source": rec["data_source"],
+                 "stale": rec["stale"]}
 
 
 def handle_telemetry_batch(body: Dict[str, Any]) -> Response:
@@ -81,7 +82,8 @@ def handle_telemetry_batch(body: Dict[str, Any]) -> Response:
         get_store().put_readings(good)
     status = 201 if not rejected else (207 if good else 400)
     return status, {"status": "success" if not rejected else "partial" if good else "error",
-                    "accepted": len(good), "rejected": rejected[:20], "rejected_count": len(rejected)}
+                    "accepted": len(good), "stale": sum(1 for r in good if r["stale"]),
+                    "rejected": rejected[:20], "rejected_count": len(rejected)}
 
 
 def handle_telemetry_get(well_id: str = "BW-001", limit: int = 100) -> Response:

@@ -35,7 +35,7 @@ export function KpiRow() {
     <section className="kpis" aria-label="Key numbers">
       <div className="kpi" style={{ '--i': 0 }}><span className="kpi-l">Depth to water</span><b><CountUp value={sim.meas} decimals={2} /></b><span className="kpi-u">metres below ground</span></div>
       <div className={'kpi' + (failing ? ' hot' : '')} style={{ '--i': 1 }}><span className="kpi-l">Dry in</span><b>{failing ? <CountUp value={Math.max(0, fc.p50 - day)} /> : dryWord}</b><span className="kpi-u">{dryNote}</span></div>
-      <div className="kpi" style={{ '--i': 2 }}><span className="kpi-l">Transmissivity</span><b><CountUp value={T} decimals={1} /></b><span className="kpi-u">m²/day from the last refill</span></div>
+      <div className="kpi" style={{ '--i': 2 }}><span className="kpi-l">Transmissivity</span><b><CountUp value={T} decimals={1} /></b><span className="kpi-u">{Number.isFinite(T) ? 'm²/day from the last refill' : 'refill too slow to fit on this bore'}</span></div>
       <div className="kpi" style={{ '--i': 3 }}><span className="kpi-l">Ward wells at risk</span><b><CountUp value={countAtRisk(day, sim)} /></b><span className="kpi-u">of {FLEET.length} dry before the monsoon</span></div>
     </section>
   );

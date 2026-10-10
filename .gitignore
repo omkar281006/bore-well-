@@ -35,3 +35,10 @@ frontend/dist/
 .aws-sam/
 samconfig.toml
 data/local_store/
+
+# never commit AWS keys or local env files
+.env.*
+!.env.example
+*.pem
+.aws/
+credentials

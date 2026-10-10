@@ -101,7 +101,7 @@ export default function Stage({ isLight }) {
           <span>Water table <b>{sim.swl.toFixed(1)} m</b></span>
           <span>Pump <b>{sim.pumpOn ? (sim.dryRun ? 'DRY · ' : 'ON · ') + (sim.sc.pumpKind === 'hand' ? 'by hand' : sim.I.toFixed(1) + ' A') : 'off'}</b></span>
           <span>Air in bore <b>{sim.temp.toFixed(1)} °C</b></span>
-          <span>Transmissivity <b>{sim.T.toFixed(0)} m²/d</b></span>
+          <span>Transmissivity <b>{Number.isFinite(sim.T) ? sim.T.toFixed(0) + ' m²/d' : '—'}</b></span>
         </div>
         <div className="hud-note">
           {sim.pumpOn

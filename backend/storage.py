@@ -147,13 +147,20 @@ class DynamoStore:
     def list_wells(self) -> List[Dict[str, Any]]:
         from boto3.dynamodb.conditions import Attr
 
-        res = self.table.scan(FilterExpression=Attr("timestamp").eq(META_SK))
+        # A Scan reads at most 1 MB per call, so keep paging until the whole table has been read;
+        # otherwise well records beyond the first page (behind thousands of readings) are missed.
+        kwargs: Dict[str, Any] = {"FilterExpression": Attr("timestamp").eq(META_SK)}
         out = []
-        for item in res.get("Items", []):
-            item = _to_plain(item)
-            item.pop("timestamp", None)
-            out.append(item)
-        return out
+        while True:
+            res = self.table.scan(**kwargs)
+            for item in res.get("Items", []):
+                item = _to_plain(item)
+                item.pop("timestamp", None)
+                out.append(item)
+            if "LastEvaluatedKey" not in res:
+                break
+            kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+        return sorted(out, key=lambda w: w.get("well_id", ""))
 
 
 _STORE = None

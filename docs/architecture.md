@@ -36,7 +36,8 @@ demo mode runs it in the browser; the fleet runs it in Python and posts telemetr
 2. drawdown at switch-off, Theis recovery fit on readings 45+ minutes after switch-off → transmissivity,
    specific capacity, mean motor current
 3. daily pre-pump water table and deepest level
-4. dry-up forecast: 21-day trend against `intake − 2 m`, P10/P50/P90 dates, pumping cut that reaches 10 June
+0. drop readings flagged `stale` and readings with `pump_state: UNKNOWN` (counted in `excluded_readings`)
+4. dry-up forecast: 21-day trend against the threshold `intake − min_submergence` (default 2 m), P10/P50/P90 dates, pumping cut that reaches 10 June
 5. findings with message keys the web app translates (en / mr / hi)
 
 | Finding | Signature in the data |
@@ -58,10 +59,12 @@ fracture and sensor faults are not visible there.
 
 | Service | Use |
 |---|---|
-| API Gateway (HTTP API) | public endpoint, CORS |
+| API Gateway (HTTP API) | public endpoint, CORS, throttled to 20 req/s (burst 50) |
 | Lambda (Python 3.12, arm64) | ingestion, validation, analysis |
 | DynamoDB | telemetry and well records |
-| CloudWatch | Lambda error alarm, logs |
+| CloudWatch | Lambda error alarm, logs (14-day retention) |
+| AWS Budgets | 5 USD/month alert (`infra/`) |
+| IAM | scoped `borewise-deployer` user (`infra/deployer-policy.json`); Lambda role limited to its table |
 | Amplify Hosting | the built web app (`frontend/dist`) |
 | ECS Fargate (planned) | always-on simulator fleet |
 | SNS / WhatsApp (planned) | alerts from findings |

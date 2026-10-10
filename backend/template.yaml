@@ -18,6 +18,11 @@ Parameters:
     Default: '*'
     Description: Web app origin allowed by CORS, e.g. https://main.d123.amplifyapp.com
 
+  StaleAfterHours:
+    Type: Number
+    Default: 24
+    Description: Device readings received more than this many hours after they were taken are stored with stale=true and kept out of the forecast.
+
 Conditions:
   IsProvisioned: !Equals [!Ref BillingMode, PROVISIONED]
 
@@ -56,6 +61,10 @@ Resources:
         AllowMethods: [GET, POST, OPTIONS]
         AllowHeaders: [Content-Type, Authorization]
         MaxAge: 600
+      # Public endpoint: throttle so a runaway script cannot run up the bill.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -67,6 +76,7 @@ Resources:
         Variables:
           DYNAMODB_TABLE: !Ref TelemetryTable
           ALLOWED_ORIGIN: !Ref AllowedOrigin
+          STALE_AFTER_HOURS: !Ref StaleAfterHours
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref TelemetryTable
@@ -77,6 +87,12 @@ Resources:
         Proxy:
           Type: HttpApi
           Properties: { ApiId: !Ref BoreWiseApi, Path: '/{proxy+}', Method: ANY }
+
+  ApiFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ApiFunction}'
+      RetentionInDays: 14
 
   ApiErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -98,3 +114,5 @@ Outputs:
     Value: !Sub 'https://${BoreWiseApi}.execute-api.${AWS::Region}.amazonaws.com'
   TableName:
     Value: !Ref TelemetryTable
+  FunctionName:
+    Value: !Ref ApiFunction
