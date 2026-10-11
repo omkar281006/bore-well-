@@ -14,7 +14,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # run from any folder
+# Find simulator/ and backend/: next to this file (deployed dashboard.zip) or one level up (the repo).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.dirname(_HERE), _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from simulator.simulator import BorewellSimulator
 from simulator.forecast import analyze_drawdown_and_recovery, forecast_water_level_risk
