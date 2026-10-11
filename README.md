@@ -5,7 +5,7 @@ each pump run, diagnoses what is going wrong, and forecasts the day it will run 
 housing society or farm cooperative to ration water instead of paying for tankers or a burnt pump.
 
 Built for the AWS city-problems hackathon, **Heat and Water track** (groundwater and droughts), by a
-team from VIT Pune. Repo: <https://github.com/mahendraSpatil/borewise>.
+team from VIT Pune. Repo: <https://github.com/omkar281006/bore-well->.
 
 ---
 

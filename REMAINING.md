@@ -27,7 +27,7 @@ everything below.
 | Cycle diagnostics and quality flags | ✅ Done | Recovery fit, findings, sensor-fault flag |
 | ESP32: DS18B20, pump-state input | ❓ Unknown | Firmware written, **not compiled or flashed**. Team to confirm |
 | Short PVC tube acoustic trial | ❓ Unknown / likely not done | Optional. Report honestly if skipped |
-| Public repo with setup instructions | 🟡 Check | README done. Confirm the push to `mahendraSpatil/borewise` went through and the repo is **public** |
+| Public repo with setup instructions | 🟡 Check | README done. Code is on `omkar281006/bore-well-`; make sure the repo is **public** |
 | `SUBMISSION.md` write-up | ❌ Missing | Plan section 7 outline |
 | Demo video, 3 min or less | ❌ Missing | Needs the deployed AWS round trip on screen |
 | `config/` well profiles | ✅ Done | `config/wells.json`: 3 wells; `fleet --config` registers them |

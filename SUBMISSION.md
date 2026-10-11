@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Repository | https://github.com/mahendraSpatil/borewise |
+| Repository | https://github.com/omkar281006/bore-well- |
 | Live API (AWS) | `[DEPLOYED_API_URL]` (try `/health` and `/wells/BW-001`) |
 | Web app | `[WEB_APP_URL or "run locally: frontend/README in section 8 of README.md"]` |
 | Demo video (≤ 3 min) | `[VIDEO_URL]` |
