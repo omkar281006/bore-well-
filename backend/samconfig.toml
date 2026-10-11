@@ -1,0 +1,18 @@
+# Lets `sam build && sam deploy` run without --guided. Change region/stack here if needed.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "borewise"
+
+[default.build.parameters]
+cached = true
+
+[default.deploy.parameters]
+region = "ap-south-1"
+resolve_s3 = true
+s3_prefix = "borewise"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+parameter_overrides = "BillingMode=\"PAY_PER_REQUEST\" AllowedOrigin=\"*\" StaleAfterHours=\"24\""
+tags = "project=\"borewise\" event=\"aws-environment-hackathon-2026\""

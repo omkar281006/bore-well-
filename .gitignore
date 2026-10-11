@@ -33,7 +33,7 @@ frontend/dist/
 
 # AWS SAM
 .aws-sam/
-samconfig.toml
+!backend/samconfig.toml
 data/local_store/
 
 # never commit AWS keys or local env files
