@@ -300,7 +300,7 @@ While the pump runs: `"depth_to_water_m": null, "measurement_valid": false`.
 
 | Check | Result |
 |---|---|
-| Python test suite (`python -m pytest tests`) | 35 / 35 pass |
+| Python test suite (`python -m pytest tests`) | 36 / 36 pass |
 | API smoke test (`scripts/smoke_test.py`, local rehearsal) | 18 / 18 pass; AWS run pending deploy |
 | Web app simulator tests (`npm test`) | 5 / 5 pass |
 | Web app engine sweep (`npm run validate`), 4 bores × 9 scenarios | 31 / 36 caught |
