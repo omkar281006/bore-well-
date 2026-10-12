@@ -299,3 +299,7 @@ img{max-width:100%}
 .live-status{margin:0;font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
 .live-status.ok{color:var(--ok)}
 .live-status.error{color:var(--act)}
+
+/* live well picker */
+.well-pick{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
+.well-pick select{font:inherit;font-size:13px;padding:7px 9px;border-radius:10px;border:1px solid var(--line-2);background:var(--panel-solid);color:var(--mist);max-width:100%}

@@ -144,3 +144,68 @@ def test_fleet_registers_wells_from_config():
         assert body["readings"], p["well_id"]
         assert body["threshold_m"] == round(p["intake_m"] - p["min_submergence_m"], 2)
         assert body["well"]["bore_type"] == p["bore_type"]
+
+
+# ---------------------------------------------------------------- fixed baseline and the fleet view
+def _window(scenario, bore, extra_days):
+    """30 days before the scenario's key moment plus `extra_days` after; returns (window rows, baseline rows, cfg)."""
+    sc = build_config(scenario, bore)
+    probe = Borewell(dict(sc))
+    probe.warm_up()
+    target = probe.t / 24
+    well = Borewell(sc)
+    start = max(sc["startDay"], target - 30)
+    while well.t < start * 24:
+        well.step()
+    rows = list(stream(well, "BW-T", (target - start + extra_days) * 24))
+    first, last = parse(rows[0]["timestamp"]), parse(rows[-1]["timestamp"])
+    base = [r for r in rows if parse(r["timestamp"]) < first + dt.timedelta(days=10)]
+    window = [r for r in rows if parse(r["timestamp"]) >= last - dt.timedelta(days=30)]
+    rain = {(well.season_start + dt.timedelta(days=d)).date().isoformat(): v for d, v in enumerate(well.rain)}
+    cfg = {"depth_m": sc["depth"], "intake_m": sc["intake"], "pump_flow_m3_day": sc["Q"], "fractures": sc["fr"], "rain_mm": rain}
+    return window, base, cfg
+
+
+def test_clogging_stays_flagged_against_fixed_baseline():
+    window, base, cfg = _window("clog", "open", 36)
+    with_base = [f["title"] for f in analyze(window, cfg, base)["findings"]]
+    without = [f["title"] for f in analyze(window, cfg)["findings"]]
+    assert any(t.startswith("Well clogging") for t in with_base), with_base
+    assert not any(t.startswith("Well clogging") for t in without)  # the sliding baseline had lost it
+
+
+def test_healthy_well_has_no_warning_with_fixed_baseline():
+    window, base, cfg = _window("healthy", "screen", 36)
+    sevs = [f["sev"] for f in analyze(window, cfg, base)["findings"]]
+    assert not any(s in ("crit", "act", "fault") for s in sevs), sevs
+
+
+def test_fleet_endpoint_reports_every_registered_well():
+    import simulator.fleet as fleet
+    from backend.app import reset_caches
+
+    reset_store(MemoryStore())
+    reset_caches()
+
+    def fake_request(method, url, body=None, retries=3):
+        res = lambda_handler({"httpMethod": method, "path": url.split("http://test", 1)[1],
+                              "body": json.dumps(body) if body is not None else None}, None)
+        return json.loads(res["body"])
+
+    orig = fleet._request
+    fleet._request = fake_request
+    try:
+        fleet.main(["--api", "http://test", "--config", "config/wells.json"])
+    finally:
+        fleet._request = orig
+    res = lambda_handler({"httpMethod": "GET", "path": "/fleet", "queryStringParameters": {"days": "30"}}, None)
+    body = json.loads(res["body"])
+    assert res["statusCode"] == 200 and body["count"] == 3
+    by_id = {w["well_id"]: w for w in body["wells"]}
+    assert by_id["BW-001"]["status"] in ("act", "crit") and by_id["BW-001"]["forecast_state"] == "fail"
+    assert by_id["BW-002"]["status"] == "ok"
+    assert by_id["BW-003"]["top"]["title"] == "Level drops while your pump is off"
+    assert body["at_risk"] == 1
+    # second call is served from the cache and must be identical
+    again = json.loads(lambda_handler({"httpMethod": "GET", "path": "/fleet"}, None)["body"])
+    assert [w["status"] for w in again["wells"]] == [w["status"] for w in body["wells"]]

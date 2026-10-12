@@ -218,7 +218,8 @@ costs almost nothing at idle and needs no servers to babysit during a hackathon.
 | Web app simulator tests | 5 / 5 pass |
 | API smoke test, local rehearsal | 18 / 18 pass |
 | API smoke test, live on AWS | `[18 / 18, or not run]` |
-| Fault detection, 4 bore types × 9 scenarios | 31 / 36 caught |
+| Fault detection, 4 bore types × 9 scenarios | 32 / 36 caught (27 / 27 on submersible bores) |
+| Stress test, 36 wells, 400k readings | 0 server errors, 200 / 200 bad records rejected |
 | Acoustic depth, simulated, 161 pings | mean bias 0.2 cm, worst 4.6 cm |
 | Transmissivity from the refill fit | within about 25% of the simulator's true value |
 | Python vs JavaScript physics | agree to 1 mm |

@@ -5,8 +5,10 @@ import { MagneticButton } from './Effects.jsx';
 
 const SPEEDS = [[1, '1 h/s'], [6, '6 h/s'], [24, '1 d/s'], [168, '1 wk/s']];
 
+const STATUS_WORD = { ok: 'healthy', watch: 'watch', act: 'dry before monsoon', crit: 'critical', fault: 'sensor fault', nodata: 'no data' };
+
 export default function ControlRail() {
-  const { sim, isLive, mode, liveStatus, scenarioIdx, boreIdx, playing, speed, soundOn, setScenario, setBore, togglePlay, setSpeed, toggleSound, pingNow, setAuto, setProtect } = useSim();
+  const { sim, isLive, mode, liveStatus, wellId, setWellId, fleet, scenarioIdx, boreIdx, playing, speed, soundOn, setScenario, setBore, togglePlay, setSpeed, toggleSound, pingNow, setAuto, setProtect } = useSim();
   const toast = useToast();
   const day = sim.t / 24;
 
@@ -54,6 +56,14 @@ export default function ControlRail() {
       {isLive ? (
         <section>
           <p className="eyebrow">Live well</p>
+          <label className="well-pick">
+            <span className="muted small">Registered well</span>
+            <select value={wellId} onChange={(e) => setWellId(e.target.value)} aria-label="Choose a registered well">
+              {(fleet && fleet.wells.length ? fleet.wells : [{ well_id: wellId, name: wellId }]).map((w) => (
+                <option key={w.well_id} value={w.well_id}>{w.well_id}: {w.name}{w.status ? ` (${STATUS_WORD[w.status] || w.status})` : ''}</option>
+              ))}
+            </select>
+          </label>
           <table className="params"><tbody>
             <tr><td>Well</td><td>{sim.wellId}</td></tr>
             <tr><td>Data source</td><td>{sim.dataSource}</td></tr>

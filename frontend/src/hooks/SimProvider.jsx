@@ -12,13 +12,14 @@ import {
   setAuto as setAutoSim, setProtect as setProtectSim,
 } from '../sim/index.js';
 import { playChirp } from '../audio/chirp.js';
-import { getWell, HAS_API, WELL_ID } from '../api/client.js';
+import { getFleet, getWell, HAS_API, WELL_ID } from '../api/client.js';
 import { reconstructedPingInput, toSimShape } from '../live/adapter.js';
 
 const SimContext = createContext(null);
 const AUTO_PING_SECONDS = 4.5;
 const UI_REFRESH_MS = 150;
 const POLL_MS = 4000;
+const FLEET_POLL_MS = 30000; // every registered well is analysed per call, so poll it slowly
 
 export const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -45,6 +46,9 @@ export function SimProvider({ children }) {
   const [soundOn, setSoundOn] = useState(false);
   const [mode, setModeState] = useState(initialMode);
   const [liveStatus, setLiveStatus] = useState({ state: 'idle', message: '' });
+  const [wellId, setWellIdState] = useState(WELL_ID);
+  const [fleet, setFleet] = useState(null); // GET /fleet: every registered well's status
+  const [fleetError, setFleetError] = useState(''); 
   const [, setTick] = useState(0);
   const settings = useRef({ playing, speed, soundOn, mode });
   settings.current = { playing, speed, soundOn, mode };
@@ -75,7 +79,7 @@ export function SimProvider({ children }) {
     let lastBore = null;
     const poll = async () => {
       try {
-        const res = await getWell(WELL_ID, 60);
+        const res = await getWell(wellId, 60);
         if (stop) return;
         const shaped = toSimShape(res);
         const first = !liveRef.current;
@@ -86,14 +90,45 @@ export function SimProvider({ children }) {
         lastBore = shaped.sc;
       } catch (err) {
         if (stop) return;
-        setLiveStatus({ state: 'error', message: err.status === 404 ? `No telemetry for ${WELL_ID} yet. Run the simulator fleet or connect a device.` : `Cannot reach the API: ${err.message}` });
+        setLiveStatus({ state: 'error', message: err.status === 404 ? `No telemetry for ${wellId} yet. Run the simulator fleet or connect a device.` : `Cannot reach the API: ${err.message}` });
       }
       if (!stop) timer = setTimeout(poll, POLL_MS);
     };
-    setLiveStatus({ state: 'loading', message: 'Connecting to the BoreWise API…' });
+    liveRef.current = null; // a different well: drop the old one's data
+    setLiveStatus({ state: 'loading', message: `Loading ${wellId}…` });
     poll();
     return () => { stop = true; clearTimeout(timer); };
-  }, [mode, emit]);
+  }, [mode, emit, wellId]);
+
+  // ---- fleet polling (ward radar and wells-at-risk count), slower than the single well
+  useEffect(() => {
+    if (mode !== 'live') return undefined;
+    let stop = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const res = await getFleet(30);
+        if (stop) return;
+        setFleet(res);
+        setFleetError('');
+      } catch (err) {
+        if (!stop) setFleetError(`Fleet unavailable: ${err.message}`);
+      }
+      if (!stop) timer = setTimeout(poll, FLEET_POLL_MS);
+    };
+    poll();
+    return () => { stop = true; clearTimeout(timer); };
+  }, [mode]);
+
+  const setWellId = useCallback((id) => {
+    if (!id) return;
+    setWellIdState(id);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set('well', id);
+      window.history.replaceState(null, '', u);
+    } catch { /* address bar update is a convenience only */ }
+  }, []);
 
   const firePing = useCallback((manual) => {
     const w = current();
@@ -140,6 +175,7 @@ export function SimProvider({ children }) {
   const isLive = mode === 'live' && Boolean(liveRef.current);
   const value = useMemo(() => ({
     simRef, liveRef, pingRef, scenarioIdx, boreIdx, playing, speed, lang, soundOn, mode, liveStatus, hasApi: HAS_API,
+    wellId, setWellId, fleet, fleetError,
     setScenario: setScenarioIdx,
     setBore: setBoreIdx,
     togglePlay: () => setPlaying((p) => !p),
@@ -154,7 +190,7 @@ export function SimProvider({ children }) {
     setProtect: (on) => !isLive && setProtectSim(simRef.current, on),
     subscribeFrame: (fn) => { frameSubs.current.add(fn); return () => frameSubs.current.delete(fn); },
     subscribeEvents: (fn) => { eventSubs.current.add(fn); return () => eventSubs.current.delete(fn); },
-  }), [scenarioIdx, boreIdx, playing, speed, lang, soundOn, mode, liveStatus, firePing, setMode, isLive]);
+  }), [scenarioIdx, boreIdx, playing, speed, lang, soundOn, mode, liveStatus, firePing, setMode, isLive, wellId, setWellId, fleet, fleetError]);
 
   return <SimContext.Provider value={value}>{children}</SimContext.Provider>;
 }

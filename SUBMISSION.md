@@ -86,10 +86,11 @@ Region `ap-south-1` (Mumbai). Cost for the hackathon: under 1 USD.
 
 | Check | Result |
 |---|---|
-| Python test suite | 36 / 36 pass |
+| Python test suite | 39 / 39 pass |
 | Web app simulator tests | 5 / 5 pass |
 | Live AWS smoke test (`docs/deployment-evidence.md`) | `[18 / 18]` against the deployed API, DynamoDB store |
-| Fault detection, 4 bore types × 9 scenarios, on device-style telemetry | 31 / 36 caught |
+| Fault detection, 4 bore types × 9 scenarios, on device-style telemetry | 32 / 36 caught (27 / 27 on submersible bores) |
+| Stress test: 36 wells, 400k readings, parallel load | 0 server errors; 200 / 200 bad records rejected |
 | Acoustic depth, simulated, 161 pings | mean bias 0.2 cm, worst 4.6 cm |
 | Transmissivity from the refill fit | within about 25% of the simulator's true value |
 | Bad input | missing fields, out-of-range depth, no timezone, bad enum, future device clock, malformed JSON all rejected (HTTP 400); late readings stored but flagged `stale` and kept out of the forecast |

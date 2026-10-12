@@ -54,7 +54,7 @@ export function Masthead({ isLight, onToggleTheme }) {
 
 /** Scrolling telemetry strip. Rebuilt every 1.2 s so the marquee animation is not restarted every tick. */
 export function Ticker() {
-  const { sim, ping } = useSim();
+  const { sim, ping, isLive, fleet } = useSim();
   const [items, setItems] = useState([]);
   useEffect(() => {
     const build = () => {
@@ -70,7 +70,7 @@ export function Ticker() {
         ['Echo τ', ping ? (ping.tau * 1000).toFixed(0) + ' ms' : 'gated'],
         ['Rain today', (sim.rain[Math.floor(day)] || 0).toFixed(0) + ' mm'],
         ['Status', SEVERITY_LABEL[top.sev]],
-        ['Ward', countAtRisk(day, sim) + '/' + FLEET.length + ' at risk'],
+        isLive ? ['Wells', fleet ? fleet.at_risk + '/' + fleet.count + ' at risk' : '…'] : ['Ward', countAtRisk(day, sim) + '/' + FLEET.length + ' at risk'],
         ['Season day', Math.floor(day + 1) + ' / 365'],
       ]);
     };

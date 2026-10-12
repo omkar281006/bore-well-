@@ -79,6 +79,12 @@ While the pump runs the acoustic sounding is gated, so the device sends
 Demo profiles live in `config/wells.json`; `python -m simulator.fleet --api <url> --config config/wells.json` registers and backfills them. `fractures` come from the driller's log (optional).
 `rain_mm` is daily rainfall for the well's location (IMD gridded data in production); it enables the weak-monsoon check.
 
+## Fleet view (`GET /fleet?days=30`)
+
+Status of every registered well for the web app's ward radar: `status` (`ok`, `watch`, `act`, `crit`, `fault`,
+`nodata`), `forecast_state`, `days_left`, `water_table_m`, `threshold_m`, the top finding and the last reading time.
+Add `"ward"` or `"map": {"x": 0.3, "y": 0.4}` to a well's registration to place it on the map.
+
 ## Validation behaviour
 
 - missing required field, wrong type, bad enum, out-of-range value, or a timestamp without a timezone: HTTP 400 with the reason

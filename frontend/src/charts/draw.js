@@ -333,7 +333,27 @@ export function drawEcho(cv, ping, pumpOn = false) {
 const FLEET_COLORS = () => ({ ok: C.ok, watch: C.watch, act: C.act, crit: C.crit });
 
 /** Ward map of the fleet with a radar sweep. Returns dot positions for hover tooltips. */
-export function drawFleet(cv, s) {
+// Live mode: place registered wells on the same map. A ward named in the well's ward, location or
+// name puts it in that ward; otherwise it is spread around the middle. Deterministic per well id.
+function hash01(str, salt) {
+  let x = 2166136261 ^ salt;
+  for (let i = 0; i < str.length; i++) x = Math.imul(x ^ str.charCodeAt(i), 16777619);
+  return ((x >>> 0) % 10000) / 10000;
+}
+export function liveFleetLayout(wells) {
+  return wells.map((wl) => {
+    if (wl.map && Number.isFinite(wl.map.x) && Number.isFinite(wl.map.y)) return { wl, x: wl.map.x, y: wl.map.y };
+    const text = `${wl.ward || ''} ${wl.location || ''} ${wl.name || ''}`.toLowerCase();
+    const ward = WARDS.find((wd) => text.includes(wd.n.toLowerCase()));
+    const a = hash01(wl.well_id, 1) * Math.PI * 2;
+    const r = ward ? 0.025 + hash01(wl.well_id, 2) * 0.06 : 0.12 + hash01(wl.well_id, 3) * 0.3;
+    const cx = ward ? ward.x : 0.5;
+    const cy = ward ? ward.y : 0.5;
+    return { wl, x: Math.min(0.97, Math.max(0.03, cx + Math.cos(a) * r)), y: Math.min(0.95, Math.max(0.05, cy + Math.sin(a) * r * 1.3)) };
+  });
+}
+
+export function drawFleet(cv, s, live) {
   const { ctx, w, h } = prep(cv);
   const day = s.t / 24;
   const pad = 22;
@@ -359,6 +379,39 @@ export function drawFleet(cv, s) {
   }
   const col = FLEET_COLORS();
   const positions = [];
+  if (live) {
+    const lc = { ...col, fault: C.watch, nodata: C.faint };
+    for (const p of liveFleetLayout(live.wells)) {
+      const sel = p.wl.well_id === live.selected;
+      const x = X(p.x);
+      const y = Y(p.y);
+      const c = lc[p.wl.status] || C.faint;
+      positions.push({ x, y, live: p.wl, self: sel });
+      ctx.fillStyle = c;
+      ctx.globalAlpha = 0.18;
+      ctx.beginPath();
+      ctx.arc(x, y, sel ? 16 : 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, sel ? 6 : 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (p.wl.status === 'crit' || p.wl.status === 'act' || sel) pulseDot(ctx, x, y, sel ? C.aqua : c, sel ? 1.5 : 1);
+      if (sel) {
+        ctx.strokeStyle = C.mist;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = C.faint;
+      ctx.font = MONO;
+      ctx.fillText(p.wl.well_id, x, y + (sel ? 24 : 20));
+    }
+    if (!live.wells.length) emptyState(ctx, { l: pad, t: pad }, 'No wells registered yet. Run the simulator fleet or connect a device.');
+    radar(ctx, positions.find((p) => p.self), w, h);
+    return positions;
+  }
   for (const f of FLEET) {
     const st = fleetState(f, day, s);
     const x = X(f.x);

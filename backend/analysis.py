@@ -238,8 +238,31 @@ def interference_hits(rows: List[Dict[str, Any]]) -> List[float]:
 
 
 # ---------------------------------------------------------------- main entry
-def analyze(readings: List[Dict[str, Any]], well: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Full analysis for one well. `readings` may be in any order."""
+def baseline_cycles(readings: List[Dict[str, Any]], flow_m3_day: float) -> List[Dict[str, Any]]:
+    """Pump cycles from a well's first days of data: its commissioning baseline for slow faults."""
+    rows = sorted((dict(r) for r in readings if not r.get("stale") and r.get("pump_state") in ("ON", "OFF")),
+                  key=lambda r: parse_ts(r["timestamp"]))
+    if not rows:
+        return []
+    season = season_start_for(parse_ts(rows[0]["timestamp"]))
+    for r in rows:
+        r["_ts"] = parse_ts(r["timestamp"])
+        r["_h"] = (r["_ts"] - season).total_seconds() / 3600
+    cyc = split_cycles(rows, flow_m3_day)
+    if not cyc:
+        return []
+    first = cyc[0]["day"]
+    return [c for c in cyc if c["day"] < first + 10 and not c["dry"] and c["s_end"] > 0.3]
+
+
+def analyze(readings: List[Dict[str, Any]], well: Optional[Dict[str, Any]] = None,
+            baseline: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Full analysis for one well. `readings` may be in any order.
+    `baseline` (optional): readings from the well's first days of data. Slow faults (clogging, pump wear,
+    a dewatered fracture) are then judged against that fixed baseline instead of a sliding one, so a warning
+    stays up for as long as the fault lasts.
+    """
     well = {**DEFAULT_WELL, **(well or {})}
     if not readings:
         return {"well": well, "status": "no_data", "findings": [], "forecast": {"state": "learning"}, "daily": [], "cycles": [], "readings": []}
@@ -304,16 +327,37 @@ def analyze(readings: List[Dict[str, Any]], well: Optional[Dict[str, Any]] = Non
                       "detail": f"Transmissivity fell {round((1 - tR) * 100)}% in a week as the water table dropped past a water-bearing fracture.",
                       "msg": "fracture", "v": {"depth": dep}})
 
-        base = [c for c in cycles if c["day"] < cycles[0]["day"] + 10 and not c["dry"] and c["s_end"] > 0.3] if cycles else []
+        fixed = baseline_cycles(baseline, flow) if baseline else []
+        if len(fixed) >= 3:
+            base, base_age = fixed, 99  # commissioning baseline: old enough by definition
+        else:
+            base = [c for c in cycles if c["day"] < cycles[0]["day"] + 10 and not c["dry"] and c["s_end"] > 0.3] if cycles else []
+            base_age = day - cycles[0]["day"] if cycles else 0
         scB = ratio(median([c["SC"] for c in recent]), median([c["SC"] for c in base]))
         tB = ratio(median([c["T"] for c in recent]), median([c["T"] for c in base]))
-        if big_dd and math.isfinite(scB) and math.isfinite(tB) and day - cycles[0]["day"] > 20 and scB < tB * 0.78:
+        sB = ratio(median([c["s_end"] for c in recent]), median([c["s_end"] for c in base]))
+        iB = ratio(median([c["I"] for c in recent]), median([c["I"] for c in base]))
+        swl_base = median([c["pre"] for c in base]) if base else swl_now
+        # A dewatered fracture stays dewatered: also compare with the baseline, not only with last week.
+        crossed_b = any(min(swl_base, swl_now) - 2 <= f["d"] <= max(swl_base, swl_now) + 2 for f in fractures) if fractures else False
+        if (not any(f["title"].startswith("Fracture") for f in F) and fixed and big_dd and math.isfinite(tB)
+                and tB < 0.65 and crossed_b and scB >= tB * 0.8):
+            known = sorted((f for f in fractures if f["d"] <= swl_now + 1), key=lambda f: -f["d"])
+            dep = known[0]["d"] if known else round(swl_now)
+            F.append({"sev": "act", "title": f"Fracture dewatered at {dep:g} m",
+                      "detail": f"Transmissivity is {round((1 - tB) * 100)}% below this well's baseline since the water table dropped past a water-bearing fracture.",
+                      "msg": "fracture", "v": {"depth": dep}})
+        if big_dd and math.isfinite(scB) and math.isfinite(tB) and base_age > 20 and scB < tB * 0.78:
             pc = round((tB / scB - 1) * 100)
             F.append({"sev": "act", "title": "Well clogging, aquifer unchanged",
                       "detail": f"Drawdown per run is up {pc}% more than the aquifer explains, while the refill slope holds. The loss is at the well face.",
                       "msg": "clog", "v": {"pct": pc}})
 
-        if big_dd and math.isfinite(iR) and iR < 0.97 and math.isfinite(sR) and sR < 0.88:
+        wear_vs_week = math.isfinite(iR) and iR < 0.97 and math.isfinite(sR) and sR < 0.88
+        wear_vs_base = bool(fixed) and math.isfinite(iB) and iB < 0.97 and math.isfinite(sB) and sB < 0.88
+        if big_dd and (wear_vs_week or wear_vs_base):
+            if wear_vs_base and not wear_vs_week:
+                sR, iR = sB, iB
             F.append({"sev": "watch", "title": "Pump delivering less water",
                       "detail": f"Drawdown per run down {round((1 - sR) * 100)}%, motor current down {round((1 - iR) * 100)}%. Aquifer looks unchanged.",
                       "msg": "wear", "v": {"pct": round((1 - sR) * 100)}})

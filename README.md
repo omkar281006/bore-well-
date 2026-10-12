@@ -207,7 +207,7 @@ borewise/
 ├── firmware/esp32/      main.cpp, wiring and flashing guide
 ├── config/wells.json    3 demo well profiles (intake, submergence, scenario)
 ├── infra/               deploy.ps1, scoped IAM policy, budget alert, deploy guide
-├── scripts/smoke_test.py  18-check test of a deployed API → docs/deployment-evidence.md
+├── scripts/             smoke_test.py (18 checks → docs/deployment-evidence.md), stress_test.py (load, bad data, detection → docs/stress-test-report.md)
 ├── tests/               35 pytest tests
 ├── docs/                research report, architecture, telemetry schema, limitations, teammate's original README
 ├── data/                sample CSV; local API data goes in data/local_store/
@@ -300,11 +300,12 @@ While the pump runs: `"depth_to_water_m": null, "measurement_valid": false`.
 
 | Check | Result |
 |---|---|
-| Python test suite (`python -m pytest tests`) | 36 / 36 pass |
+| Python test suite (`python -m pytest tests`) | 39 / 39 pass |
 | API smoke test (`scripts/smoke_test.py`, local rehearsal) | 18 / 18 pass; AWS run pending deploy |
 | Web app simulator tests (`npm test`) | 5 / 5 pass |
 | Web app engine sweep (`npm run validate`), 4 bores × 9 scenarios | 31 / 36 caught |
-| Backend analysis on device-style telemetry, 4 × 9 | 31 / 36 caught |
+| Backend analysis on device-style telemetry, 4 × 9 | 32 / 36 caught (27 / 27 on submersible bores) |
+| Stress test (`scripts/stress_test.py`), 36 wells, 400k readings | 0 server errors, 200 / 200 bad records rejected, ~28 requests/s on one local process |
 | Acoustic depth (simulated), 161 pings | mean bias 0.2 cm, worst 4.6 cm |
 | Transmissivity from the refill fit | within about 25% of the simulator's true value |
 | Python physics vs JS physics | agree to 1 mm |

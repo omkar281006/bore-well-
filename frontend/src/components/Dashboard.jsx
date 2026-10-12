@@ -24,7 +24,7 @@ function LiveCanvas({ draw, className = 'chart', onPositions, ...rest }) {
 
 // ---------- KPI row ----------
 export function KpiRow() {
-  const { sim } = useSim();
+  const { sim, isLive, fleet } = useSim();
   const fc = sim.forecast || { state: 'learning' };
   const day = sim.t / 24;
   const failing = fc.state === 'fail' || fc.state === 'dry';
@@ -36,7 +36,11 @@ export function KpiRow() {
       <div className="kpi" style={{ '--i': 0 }}><span className="kpi-l">Depth to water</span><b><CountUp value={sim.meas} decimals={2} /></b><span className="kpi-u">metres below ground</span></div>
       <div className={'kpi' + (failing ? ' hot' : '')} style={{ '--i': 1 }}><span className="kpi-l">Dry in</span><b>{failing ? <CountUp value={Math.max(0, fc.p50 - day)} /> : dryWord}</b><span className="kpi-u">{dryNote}</span></div>
       <div className="kpi" style={{ '--i': 2 }}><span className="kpi-l">Transmissivity</span><b><CountUp value={T} decimals={1} /></b><span className="kpi-u">{Number.isFinite(T) ? 'm²/day from the last refill' : 'refill too slow to fit on this bore'}</span></div>
-      <div className="kpi" style={{ '--i': 3 }}><span className="kpi-l">Ward wells at risk</span><b><CountUp value={countAtRisk(day, sim)} /></b><span className="kpi-u">of {FLEET.length} dry before the monsoon</span></div>
+      {isLive ? (
+        <div className={'kpi' + (fleet && fleet.at_risk ? ' hot' : '')} style={{ '--i': 3 }}><span className="kpi-l">Registered wells at risk</span><b>{fleet ? <CountUp value={fleet.at_risk} /> : '…'}</b><span className="kpi-u">{fleet ? `of ${fleet.count} dry before the monsoon` : 'loading the fleet'}</span></div>
+      ) : (
+        <div className="kpi" style={{ '--i': 3 }}><span className="kpi-l">Ward wells at risk</span><b><CountUp value={countAtRisk(day, sim)} /></b><span className="kpi-u">of {FLEET.length} dry before the monsoon</span></div>
+      )}
     </section>
   );
 }
@@ -203,11 +207,30 @@ export function EchoCard() {
   );
 }
 
+const LIVE_STATUS_LABEL = { ...FLEET_STATUS_LABEL, ok: 'Healthy', watch: 'Watch', fault: 'Sensor fault', nodata: 'No data yet' };
+
 export function FleetCard() {
-  const { sim } = useSim();
+  const { sim, isLive, fleet, fleetError, wellId, setWellId } = useSim();
   const posRef = useRef([]);
   const [tip, setTip] = useState(null);
-  const n = countAtRisk(sim.t / 24, sim);
+  const n = isLive ? (fleet ? fleet.at_risk : 0) : countAtRisk(sim.t / 24, sim);
+  const total = isLive ? (fleet ? fleet.count : 0) : FLEET.length;
+  const live = isLive && fleet ? { wells: fleet.wells, selected: wellId } : null;
+  const draw = (cv, s) => drawFleet(cv, s, live);
+  const nearest = (e, maxD) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    let best = null;
+    let bd = maxD;
+    for (const p of posRef.current) {
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  };
+  // Click a registered well to open it (hit-tested on the click itself, not on hover state).
+  const click = (e) => { const p = nearest(e, 18); if (p && p.live) setWellId(p.live.well_id); };
   const move = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - r.left;
@@ -222,10 +245,20 @@ export function FleetCard() {
   };
   return (
     <Card className="s-6" index={7}>
-      <div className="card-head"><h2>Ward groundwater radar</h2><span className="note">{n} of {FLEET.length} wells dry before the monsoon · map not to scale</span></div>
+      <div className="card-head"><h2>Ward groundwater radar</h2><span className="note">{isLive ? (fleet ? `${n} of ${total} registered wells at risk · live from the API · click a well` : fleetError || 'Loading registered wells…') : `${n} of ${total} wells dry before the monsoon · map not to scale`}</span></div>
       <div className="fleet-wrap">
-        <LiveCanvas draw={drawFleet} onPositions={(p) => (posRef.current = p)} className="chart tall" onMouseMove={move} onMouseLeave={() => setTip(null)} aria-label="Map of society borewells by ward" />
-        {tip && (
+        <LiveCanvas draw={draw} onPositions={(p) => (posRef.current = p)} className="chart tall" onMouseMove={move} onMouseLeave={() => setTip(null)} onClick={click} style={live ? { cursor: tip ? 'pointer' : 'default' } : undefined} aria-label="Map of society borewells by ward" />
+        {tip && tip.p.live && (
+          <div className="fleet-tip" style={{ left: tip.x, top: tip.y }}>
+            <b>{tip.p.live.name}</b> <span className="muted">{tip.p.live.well_id}</span><br />
+            {tip.p.live.location ? <><span className="muted">{tip.p.live.location}</span><br /></> : null}
+            {tip.p.live.water_table_m != null ? <>Water table {Number(tip.p.live.water_table_m).toFixed(1)} m<br /></> : null}
+            {LIVE_STATUS_LABEL[tip.p.live.status] || tip.p.live.status}
+            {tip.p.live.days_left != null && tip.p.live.forecast_state === 'fail' ? ` · ~${Math.round(tip.p.live.days_left)} days` : ''}<br />
+            <span className="muted">{tip.p.live.top ? tip.p.live.top.title : ''}</span>
+          </div>
+        )}
+        {tip && !tip.p.live && (
           <div className="fleet-tip" style={{ left: tip.x, top: tip.y }}>
             <b>{tip.p.f.name}</b><br />
             <span className="muted">{tip.p.f.ward}</span><br />

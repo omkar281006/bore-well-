@@ -15,7 +15,7 @@
                        ▼
         DynamoDB  PK well_id · SK timestamp  (well registration at SK "#META")
                        │
-         GET /wells/{id}│                         GET /telemetry
+         GET /wells/{id}, /fleet                   GET /telemetry
                        ▼                                 ▼
         Web app (frontend/)                       Streamlit dashboard (dashboard/)
         3D cutaway, forecast, findings,           engineering view: raw readings,
@@ -51,7 +51,11 @@ demo mode runs it in the browser; the fleet runs it in Python and posts telemetr
 | Weak monsoon | rain since 1 June < 65% of normal (needs `rain_mm` on the well) |
 | Sensor fault | two runs that move the reading < 8 cm |
 
-Validated on simulated telemetry for 4 bore types × 9 scenarios: 31 of 36 combinations caught.
+Slow faults (clogging, pump wear, a dewatered fracture) are judged against the well's own first 10 days of data, a fixed
+commissioning baseline, so a warning stays up for as long as the fault lasts.
+
+Validated on simulated telemetry for 4 bore types × 9 scenarios: 32 of 36 combinations caught, all 27 on submersible
+bores, with no false warnings on healthy wells (`docs/stress-test-report.md`).
 The hand-pump bore is the weak spot: a hand stroke barely moves the water, so wear, clogging,
 fracture and sensor faults are not visible there.
 

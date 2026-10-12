@@ -48,6 +48,9 @@ export const getWell = (wellId = WELL_ID, days = 45) => request(`/wells/${encode
 /** Registered wells with their latest reading. */
 export const listWells = () => request('/wells');
 
+/** Status of every registered well: forecast, top finding, days left (the ward radar). */
+export const getFleet = (days = 30) => request(`/fleet?days=${days}`);
+
 /** Send readings (the ESP32 and the simulator fleet do this). */
 export const postTelemetry = (record) => request('/telemetry', { method: 'POST', body: JSON.stringify(record) });
 export const postBatch = (records) => request('/telemetry/batch', { method: 'POST', body: JSON.stringify({ records }) });

@@ -9,6 +9,7 @@ Routes
   GET  /wells                          registered wells with their latest reading
   POST /wells                          register or update a well (bore type, depth, intake, pump flow, fractures, rainfall)
   GET  /wells/{well_id}?days=45        full analysis: forecast, findings, cycles, daily series, last 72 h
+  GET  /fleet?days=30                  status of every registered well (ward radar)
 
 Run locally:  python backend/app.py            (http://localhost:8000, data kept in data/local_store/)
 Deploy:       sam build && sam deploy --guided  (see backend/template.yaml)
@@ -22,7 +23,7 @@ import logging
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 if __package__ in (None, ""):
@@ -110,6 +111,33 @@ def handle_wells_list() -> Response:
     return 200, {"status": "success", "count": len(out), "wells": out}
 
 
+# Per-container caches (a warm Lambda keeps them between requests; a cold start just recomputes).
+_BASELINE: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+_SUMMARY: Dict[Tuple[int, str, str, float], Dict[str, Any]] = {}
+BASELINE_DAYS = 10
+
+
+def get_baseline(store: Any, well_id: str) -> Optional[List[Dict[str, Any]]]:
+    """The well's first BASELINE_DAYS days of readings: a fixed reference for slow faults (clogging, wear, fractures)."""
+    ck = (id(store), well_id)  # keyed by store too, so a fresh store never sees another's data
+    if ck in _BASELINE:
+        return _BASELINE[ck]
+    rows = store.query_readings(well_id, limit=4000)  # oldest first
+    if not rows:
+        return None
+    first = parse_ts(rows[0]["timestamp"])
+    cutoff = first + dt.timedelta(days=BASELINE_DAYS)
+    base = [r for r in rows if parse_ts(r["timestamp"]) < cutoff]
+    if parse_ts(rows[-1]["timestamp"]) >= cutoff:  # complete: it can never change again
+        _BASELINE[ck] = base
+    return base
+
+
+def reset_caches() -> None:
+    _BASELINE.clear()
+    _SUMMARY.clear()
+
+
 def handle_well_get(well_id: str, days: float = 45) -> Response:
     store = get_store()
     newest = store.query_readings(well_id, limit=1, newest_first=True)
@@ -119,7 +147,7 @@ def handle_well_get(well_id: str, days: float = 45) -> Response:
     since = since_ts.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # stored timestamps are UTC
     readings = store.query_readings(well_id, since=since) or newest
     cfg = store.get_well(well_id) or {**DEFAULT_WELL, "well_id": well_id}
-    result = analyze(readings, cfg)
+    result = analyze(readings, cfg, get_baseline(store, well_id))
     rain = cfg.get("rain_mm") or {}
     if rain and result.get("season_start"):
         start = dt.datetime.fromisoformat(result["season_start"]).date()
@@ -127,6 +155,57 @@ def handle_well_get(well_id: str, days: float = 45) -> Response:
     result["well"] = {k: v for k, v in result["well"].items() if k != "rain_mm"}
     result["window_days"] = days
     return 200, {"status": "success", **result}
+
+
+SEV_ORDER = ["ok", "watch", "fault", "act", "crit"]
+
+
+def well_summary(store: Any, cfg: Dict[str, Any], days: float = 30) -> Dict[str, Any]:
+    """Compact status of one registered well for the ward radar (same analysis as GET /wells/{id})."""
+    wid = cfg["well_id"]
+    base = {"well_id": wid, "name": cfg.get("name") or wid, "location": cfg.get("location"), "ward": cfg.get("ward"),
+            "bore_type": cfg.get("bore_type"), "map": cfg.get("map")}
+    newest = store.query_readings(wid, limit=1, newest_first=True)
+    if not newest:
+        return {**base, "status": "nodata", "readings": 0}
+    key = (id(store), wid, newest[0]["timestamp"], days)
+    if key in _SUMMARY:  # nothing new since the last call: reuse
+        return {**_SUMMARY[key], **base}
+    since = (parse_ts(newest[0]["timestamp"]) - dt.timedelta(days=days)).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    res = analyze(store.query_readings(wid, since=since) or newest, cfg, get_baseline(store, wid))
+    fc = res.get("forecast", {})
+    day = res["now_hours"] / 24
+    days_left = round(fc["p50"] - day, 1) if isinstance(fc.get("p50"), (int, float)) else None
+    # Status: the worse of the forecast and the top finding.
+    st = "ok"
+    if fc.get("state") == "dry" or (fc.get("state") == "fail" and days_left is not None and days_left < 14):
+        st = "crit"
+    elif fc.get("state") == "fail":
+        st = "act"
+    elif fc.get("state") == "ok" and isinstance(fc.get("marginOnset"), (int, float)) and fc["marginOnset"] < 10:
+        st = "watch"
+    top = res["findings"][0] if res["findings"] else {"sev": "ok", "title": "Healthy"}
+    if SEV_ORDER.index(top["sev"]) > SEV_ORDER.index(st):
+        st = top["sev"]
+    summary = {**base, "status": st, "forecast_state": fc.get("state"), "days_left": days_left,
+            "water_table_m": res.get("water_table_m"), "threshold_m": res.get("threshold_m"),
+            "last_valid_depth_m": res.get("last_valid_depth_m"), "top": {"sev": top["sev"], "title": top["title"]},
+            "findings": [f["title"] for f in res["findings"]], "last_reading": newest[0]["timestamp"],
+            "readings": res["data_quality"]["readings_used"]}
+    out = summary
+    _SUMMARY[key] = out
+    if len(_SUMMARY) > 2000:
+        _SUMMARY.clear()
+    return out
+
+
+def handle_fleet(days: float = 30) -> Response:
+    """Status of every registered well (the web app's ward radar)."""
+    store = get_store()
+    wells = [well_summary(store, w, days) for w in store.list_wells()]
+    counts = {k: sum(1 for w in wells if w["status"] == k) for k in SEV_ORDER + ["nodata"]}
+    at_risk = sum(1 for w in wells if w["status"] in ("act", "crit"))
+    return 200, {"status": "success", "count": len(wells), "at_risk": at_risk, "by_status": counts, "wells": wells}
 
 
 # ---------------------------------------------------------------- router
@@ -149,6 +228,12 @@ def route(method: str, path: str, query: Dict[str, str], body: Any) -> Response:
             return handle_wells_list()
         if method == "POST":
             return handle_well_post(body)
+    if parts == ["fleet"] and method == "GET":
+        try:
+            days = min(120.0, max(7.0, float(query.get("days", 30))))
+        except ValueError:
+            return 400, {"status": "error", "message": "'days' must be a number"}
+        return handle_fleet(days)
     if len(parts) == 2 and parts[0] == "wells" and method == "GET":
         try:
             days = min(370.0, max(1.0, float(query.get("days", 45))))
@@ -156,7 +241,7 @@ def route(method: str, path: str, query: Dict[str, str], body: Any) -> Response:
             return 400, {"status": "error", "message": "'days' must be a number"}
         return handle_well_get(parts[1], days)
     if parts == [] and method == "GET":
-        return 200, {"status": "ok", "service": "BoreWise API", "routes": ["/health", "/telemetry", "/telemetry/batch", "/wells", "/wells/{well_id}"]}
+        return 200, {"status": "ok", "service": "BoreWise API", "routes": ["/health", "/telemetry", "/telemetry/batch", "/wells", "/wells/{well_id}", "/fleet"]}
     return 405 if parts in (["telemetry"], ["wells"]) else 404, {"status": "error", "message": f"No route for {method} {path}"}
 
 
